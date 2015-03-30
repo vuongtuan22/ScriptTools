@@ -125,6 +125,67 @@ get_loading_server_conf()
         fi
     fi
 }
+# Tuan-Huy Update Script file
+#$1: target ip
+get_password_list() 
+{
+    #check service provider base on IP
+    #generate password string
+
+    month_info=(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec)
+    password_list=""
+    base_password="epc.pkg.Q1" 
+    if [ $1 == "10.1.11.254" ] || [ $1 == "10.1.11.247" ]; then
+           month=$(date '+%m');
+           month_char=${month_info[$month]}
+           password=epc.pkg.$month_char
+           password_list=$password" ""epc.pkg.Q1"
+    else
+           password_list=" epc.pkg.difficult epc.pkg.Q1"
+           #password_list=" epc.pkg.difficult admin"
+    fi
+    echo $password_list 
+}
+
+#$1 : IP
+#$2 : user name
+#$3 : password
+ssh_attemp()
+{
+    check=1
+    expect -c "
+        set timeout 1 
+        spawn ssh $2@$1
+        expect {
+            -re \".*Are.*.*yes.*no.*\" { send \"yes\r\"; exp_continue }
+            \"password: \" { send \"$3\r\"; exp_continue }
+            -re \". $\" { exit }
+            eof { exit }
+        }
+        expect -re \".\" { exit }
+    "
+}
+#$1: target IP
+#$2: ESM IP
+#$3: user name
+validate_password()
+{
+  temp=$(get_password_list $1)
+  for password in $temp
+  do
+     #check password here
+     echo "check password: $password"
+     result=$(ssh_attemp $2 $3 $password)
+     #sleep 1
+     if [[ "$result" =~ "Last login" ]]; then
+        ESM_USER_PASS="$password"
+      #  echo "Correct password "
+      #else
+      #  echo "Wrong password"
+     fi
+  done
+}
+#Tuan-Huy update end 
 
 # make patch directory: mkdir -p $SERVER://~$TMP_SERVER_USER/$patch_dir
 # $1 : server ip 
@@ -362,6 +423,9 @@ shelf=`get_shelf_num $target_ip`
 processor=`get_processor_id $target_ip`
 
 get_loading_server_conf
+#Tuan-Huy update script
+validate_password $target_ip $ESM_SERVER_IP $ESM_SERVER_USER
+#Tuan-Huy update end
 
 model=$NODE_TYPE
 
