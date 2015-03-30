@@ -70,19 +70,11 @@ remote_command3()
         }
     "
 }
-checkuser()
-{
-  set timeout -1
-  spawn ssh $2@$1
-}
-
 
 #result=$(remote_command2 192.168.1.59 pi admin2) 
 #remote_command2 192.168.1.59 pi admin admin3 admin2
 #result=$(remote_command2 192.168.1.59 pi admin3 admin admin2)
-#result=$(remote_command3 192.168.1.59 pi admin)
-
-result=$(checkuser 192.168.1.59 pi admin)
+result=$(remote_command3 192.168.1.59 pi admin)
 
 echo 'Script end '
 echo $resul
