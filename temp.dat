@@ -1,0 +1,88 @@
+#!/bin/bash
+
+remote_command()
+{   
+   expect -c "
+        set timeout -1 
+        spawn ssh $2@$1
+        expect {
+            -re \".*Are.*.*yes.*no.*\" { send \"yes\r\"; exp_continue }
+            \"password: \" { send \"$3\r\" }
+            eof { exit }
+        }
+        expect {
+            -re \"password:*\" { send \"$4\r\"; exp_continue }
+            eof { exit }
+        }
+        expect {
+            -re \"password:*\" { send \"$5\r\"; exp_continue }
+            eof { exit }
+        }
+
+        expect {
+            -re \"raspberrypi*\" { send \"exit\r\"; exp_continue }
+            eof { exit }
+        }
+
+
+        expect -re \"(%|#|\\\\$) \" { exit }
+    "
+}
+
+remote_command2()
+{
+    expect -c "
+        set timeout -1 
+        spawn ssh $2@$1
+        expect {
+            -re \".*Are.*.*yes.*no.*\" { send \"yes\r\"; exp_continue }
+            \"password: \" { send \"$3\r\" }
+            eof { exit }
+        }
+        expect {
+            -re \".*Are.*.*yes.*no.*\" { send \"yes\r\"; exp_continue }
+            \"password: \" { send \"$4\r\" }
+            -re \"pi.raspberrypi\" { exit}
+            eof { exit }
+        }
+        expect {
+            -re \".*Are.*.*yes.*no.*\" { send \"yes\r\"; exp_continue }
+            \"password: \" { send \"$5\r\" }
+            -re \"pi.raspberrypi\" { exit }
+            eof { exit }
+        }
+
+        expect -re \"pi.raspberrypi\" { exit }
+    "
+}
+
+remote_command3()
+{
+    check=1
+    expect -c "
+        set timeout -1 
+        spawn ssh $2@$1
+        expect {
+            -re \".*Are.*.*yes.*no.*\" { send \"yes\r\"; exp_continue }
+            \"password: \" { send \"$3\r\"; exp_continue }
+            -re \"pi.raspberrypi\" {  }
+            eof { exit }
+        }
+    "
+}
+checkuser()
+{
+  set timeout -1
+  spawn ssh $2@$1
+}
+
+
+#result=$(remote_command2 192.168.1.59 pi admin2) 
+#remote_command2 192.168.1.59 pi admin admin3 admin2
+#result=$(remote_command2 192.168.1.59 pi admin3 admin admin2)
+#result=$(remote_command3 192.168.1.59 pi admin)
+
+result=$(checkuser 192.168.1.59 pi admin)
+
+echo 'Script end '
+echo $resul

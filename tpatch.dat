@@ -1,0 +1,543 @@
+#!/bin/bash
+
+usage=$(cat <<EOF
+
+    Usage: `basename $0` [-n] [-p [-f]] <target_ip> <names>
+    where 
+        -n        : not restart asp, and only change binary files of target
+        -p        : apply patch file into current loaded package files(CPUP.tgz / OMP.tgz)
+                    (-p used     : only package patch applied)
+                    (-p not used : only target patch applied)
+        -f        : force tpatch -p!
+        target_ip : target processor ip (e.g. 10.10.1.7, 10.10.1.41, etc)
+        names     : a list of component(or lib) name prefix .
+                    (e.g. masterCCH, resource, libcmf, etc)
+                    file globbing is automatically performed (name -> name*)
+                    [31mremark: in case of library, I recommend package patch(with -p option).[m
+EOF
+)
+
+PATCH_SERVER_IP=150.150.142.68
+PATCH_SERVER_PRI_IP=10.10.1.129
+PATCH_SERVER_USER=epcpkg
+PATCH_SERVER_PASSWD=epc.pkg
+
+E_NO_SERVER_CONF=64
+E_INVALID_ARGS=65
+E_NO_VIEW=66
+E_SERVER_NO_RESPONSE=67
+E_TARGET_NO_RESPONSE=68
+E_NO_SUCH_DIR=69
+E_IN_PROGRESS=70
+E_EOF=71
+E_NO_SUCH_FILE=72
+
+ct="/opt/rational/clearcase/bin/cleartool"
+LOADING_SERVER_CONF=~wsbaik2/bin/loading_server.conf
+
+ESM_SERVER_IP=
+ESM_SERVER_PRIVATE_IP=
+ESM_SERVER_PKGHOME=
+ESM_SERVER_USER=
+ESM_SERVER_PASSWD=
+ESM_SERVER_SUSER=
+ESM_SERVER_SPASSWD=
+BINARY_MODE=
+NODE_TYPE=
+
+get_rack_num() 
+{
+    local tmp rack
+
+    tmp=`echo $1 | sed 's/[0-9]*\.//'`
+    rack=`echo $tmp | sed 's/\.[0-9]*\.[0-9]*//'` 
+
+    echo $rack
+}
+
+get_shelf_num() 
+{
+    local tmp shelf
+
+    tmp=`echo $1 | sed 's/[0-9]*\.[0-9]*\.//'`
+    shelf=`echo $tmp | sed 's/\.[0-9]*//'` 
+
+    echo $shelf
+}
+
+get_processor_id() 
+{
+    local tmp processor
+
+    tmp=`echo $1 | sed 's/[0-9]*\.[0-9]*\.//'`
+    processor=`echo $tmp | sed 's/[0-9]*\.//'` 
+
+    echo $processor
+}
+
+get_loading_server_conf() 
+{
+    if [ ! -e $LOADING_SERVER_CONF ]; then
+        echo "Can't find $LOADING_SERVER_CONF file"
+        exit $E_NO_SERVER_CONF
+    fi
+
+    . $LOADING_SERVER_CONF
+
+    eval ESM_SERVER_IP=\$ESM_SERVER_IP_${rack}_${shelf}
+    eval ESM_SERVER_PRIVATE_IP=\$ESM_SERVER_PRIVATE_IP_${rack}_${shelf}
+    eval ESM_SERVER_PKGHOME=\$ESM_SERVER_PKGHOME_${rack}_${shelf}
+    eval ESM_SERVER_USER=\$ESM_SERVER_USER_${rack}_${shelf}
+    eval ESM_SERVER_PASSWD=\$ESM_SERVER_PASSWD_${rack}_${shelf}
+    eval ESM_SERVER_SUSER=\$ESM_SERVER_SUSER_${rack}_${shelf}
+    eval ESM_SERVER_SPASSWD=\$ESM_SERVER_SPASSWD_${rack}_${shelf}
+    eval BINARY_MODE=\$BINARY_MODE_${rack}_${shelf}
+    eval NODE_TYPE=\$NODE_TYPE_${rack}_${shelf}
+    eval PPM_BLADE_TYPE=\$PPM_BLADE_TYPE_${rack}_${shelf}
+
+# get rack defaults
+    [ x$ESM_SERVER_IP = x ]         && eval ESM_SERVER_IP=\$ESM_SERVER_IP_${rack}_DEFAULT
+    [ x$ESM_SERVER_PRIVATE_IP = x ] && eval ESM_SERVER_PRIVATE_IP=\$ESM_SERVER_PRIVATE_IP_${rack}_DEFAULT
+    [ x$ESM_SERVER_PKGHOME = x ]    && eval ESM_SERVER_PKGHOME=\$ESM_SERVER_PKGHOME_${rack}_DEFAULT
+    [ x$ESM_SERVER_USER = x ]       && eval ESM_SERVER_USER=\$ESM_SERVER_USER_${rack}_DEFAULT
+    [ x$ESM_SERVER_PASSWD = x ]     && eval ESM_SERVER_PASSWD=\$ESM_SERVER_PASSWD_${rack}_DEFAULT
+    [ x$ESM_SERVER_SUSER = x ]      && eval ESM_SERVER_SUSER=\$ESM_SERVER_SUSER_${rack}_DEFAULT
+    [ x$ESM_SERVER_SPASSWD = x ]    && eval ESM_SERVER_SPASSWD=\$ESM_SERVER_SPASSWD_${rack}_DEFAULT
+    [ x$BINARY_MODE = x ]           && eval BINARY_MODE=\$BINARY_MODE_${rack}_DEFAULT
+    [ x$PPM_BLADE_TYPE = x ]        && eval PPM_BLADE_TYPE=\$PPM_BLADE_TYPE${rack}_DEFAULT
+
+# get stp defaults
+    [ x$ESM_SERVER_IP = x ]         && ESM_SERVER_IP=$ESM_SERVER_IP_DEFAULT
+    [ x$ESM_SERVER_PRIVATE_IP = x ] && ESM_SERVER_PRIVATE_IP=$ESM_SERVER_PRIVATE_IP_DEFAULT
+    [ x$ESM_SERVER_PKGHOME = x ]    && ESM_SERVER_PKGHOME=$ESM_SERVER_PKGHOME_DEFAULT
+    [ x$ESM_SERVER_USER = x ]       && ESM_SERVER_USER=$ESM_SERVER_USER_DEFAULT
+    [ x$ESM_SERVER_PASSWD = x ]     && ESM_SERVER_PASSWD=$ESM_SERVER_PASSWD_DEFAULT
+    [ x$ESM_SERVER_SUSER = x ]      && ESM_SERVER_SUSER=$ESM_SERVER_SUSER_DEFAULT
+    [ x$ESM_SERVER_SPASSWD = x ]    && ESM_SERVER_SPASSWD=$ESM_SERVER_SPASSWD_DEFAULT
+    [ x$BINARY_MODE = x ]           && BINARY_MODE=$BINARY_MODE_DEFAULT
+    [ x$PPM_BLADE_TYPE = x ]        && PPM_BLADE_TYPE=$PPM_BLADE_TYPE_DEFAULT
+
+    if [ "$NODE_TYPE" == "" ]; then 
+        if [ `expr $shelf % 2` -eq 1 ]; then 
+            NODE_TYPE=MME
+        else
+            NODE_TYPE=AGW
+        fi
+    fi
+}
+
+# make patch directory: mkdir -p $SERVER://~$TMP_SERVER_USER/$patch_dir
+# $1 : server ip 
+# $2 : username 
+# $3 : password 
+# $4 : patch directory
+mk_patch_dir()
+{
+    expect -c "
+        spawn ssh $2@$1
+        expect {
+            -re \".*Are.*.*yes.*no.*\" { send \"yes\r\"; exp_continue }
+            \"password: \" { send \"$3\r\"; exp_continue }
+            -re \"(%|#|\\\\$) \" { send \"mkdir -p $4\r\" }
+            timeout { exit $E_SERVER_NO_RESPONSE }
+            eof { exit $E_EOF }
+        }
+        expect -re \"(%|#|\\\\$) \" { exit 0 }
+    "
+}
+
+# scp file: scp $SOURCE_FILE $TMP_SERVER_USERNAME@$TMP_SERVER_IP:$DESTINATION_FILE
+# $1 : server ip 
+# $2 : username 
+# $3 : password 
+# $4 : source file
+# $5 : destination file 
+scp_file()
+{
+    expect -c "
+        set timeout -1 
+        spawn scp $4 $2@$1:$5
+        expect { 
+            -re \".*Are.*.*yes.*no.*\" { send \"yes\r\"; exp_continue }
+            \"password: \" { send \"$3\r\"; exp_continue }
+            timeout { exit $E_SERVER_NO_RESPONSE }
+            eof { exit 0 }
+        }
+    "
+}
+
+# check whether working view is set
+checkWorkView()
+{
+    local myview=`$ct lsview -cview -short 2> /dev/null`
+
+    if [ -z $myview ] ; then
+        echo "Can't get current view!"
+        exit $E_NO_VIEW
+    fi
+}
+
+# run remote command
+# $1 : server ip 
+# $2 : username 
+# $3 : password 
+# $4 : cmd
+# $5~ : argument
+remote_command()
+{
+    expect -c "
+        set timeout -1 
+        spawn ssh $2@$1
+        expect {
+            -re \".*Are.*.*yes.*no.*\" { send \"yes\r\"; exp_continue }
+            \"password: \" { send \"$3\r\" }
+            eof { exit }
+        }
+        expect -re \"(%|#|\\\\$) \" { send \"$4 $5 $6 $7 $8 $9\r\" }
+        expect -re \"(%|#|\\\\$) \" { exit }
+    "
+}   
+
+untar_image()
+{
+    expect -c "
+        set timeout -1 
+        spawn ssh $2@$1
+        expect {
+            -re \".*Are.*.*yes.*no.*\" { send \"yes\r\"; exp_continue }
+            \"password: \" { send \"$3\r\" }
+            eof { exit $E_EOF }
+        }
+        expect -re \"(%|#|\\\\$) \" { send \"cd $4\r\" }
+        expect { 
+            \"No such file or directory\" { exit $E_NO_SUCH_FILE }
+#            -re \"(%|#|\\\\$) \" { send \"\[ ! -e $5.tgz.org \] && cp $5.tgz $5.tgz.org\r\" }
+            -re \"(%|#|\\\\$) \" { send \"if \[ -e .lock ]; then exit; else touch .lock && mkdir -p $5 && tar xfz $5.tgz -C $5; fi \r\" }
+        }
+        expect { 
+            \"logout\" { exit $E_IN_PROGRESS }
+            -re \"(%|#|\\\\$) \" { exit 0 }
+        }
+    "
+}
+
+tar_image()
+{
+    expect -c "
+        set timeout -1 
+        spawn ssh $2@$1
+        expect {
+            -re \".*Are.*.*yes.*no.*\" { send \"yes\r\"; exp_continue }
+            \"password: \" { send \"$3\r\" }
+            eof { exit $E_EOF }
+        }
+        expect -re \"(%|#|\\\\$) \" { send \"cd $4/$5 && tar cfz ../$5.tgz * && cd .. && rm -rf $5\r\" }
+        expect -re \"(%|#|\\\\$) \" { send \"rm -f .lock\r\" }
+        expect -re \"(%|#|\\\\$) \" { exit 0 }
+    "
+}   
+
+# get_path
+# $1 : server ip 
+# $2 : username 
+# $3 : password 
+# $4 : package home directory
+# $6 : shelf number
+# $6 : slot number
+get_path()
+{
+    result=$(remote_command $1 $2 $3 "cat $4/rc$5-$6-$7")
+#    echo $result | grep spath | sed 's/.*spath=\"//' | sed 's/\".*//'
+    spath=${result#*spath=\"}
+    spath=${spath%%\"*}
+    echo $spath
+}
+
+target_patch()
+{
+    local a_out=$1
+     
+    expect -c "
+        set timeout -1
+
+        # telnet session (ESM server)
+        spawn telnet $ESM_SERVER_IP
+        expect {
+            -re \"login: $\" { send \"$ESM_SERVER_USER\r\"; exp_continue }
+            -re \"Password: $\" { send \"$ESM_SERVER_PASSWD\r\"; exp_continue }
+            -re \"(#|\\\\$) \" { send \"telnet $target_ip\r\" }
+            timeout { exit $E_SERVER_NO_RESPONSE }
+        }
+
+        # telnet session (target)
+        expect {
+            -re \"login: $\" { send \"root\r\"; exp_continue }
+            -re \"Password: $\" { send \"root\r\"; exp_continue }
+            -re \"(#|\\\\$) \" { send \"cd /opt/lgn/asp/$image_dir_suf\r\" }
+            timeout { exit $E_TARGET_NO_RESPONSE }
+        }
+        expect {
+            \"No such file or directory\" { exit $E_NO_SUCH_DIR }
+            -re \"(#|\\\\$) \" { send \"rm -f ${a_out}*\r\" }
+        }
+        
+        expect -re \"(#|\\\\$) \" { send \"scp $ESM_SERVER_USER@$ESM_SERVER_PRIVATE_IP:$patch_dir/${a_out}* ./\r\" }
+        expect {
+            -re \".*Are.*.*yes.*no.*\" { send \"yes\r\"; exp_continue }
+            \"password: \" { send \"$ESM_SERVER_PASSWD\r\" }
+            timeout { exit $E_SERVER_NO_RESPONSE }
+        }
+
+        # telnet session
+        expect -re \"(#|\\\\$) \" { send \"chmod +x ${a_out}*\r\" }
+        expect -re \"(#|\\\\$) \" { send \"ls -l ${a_out}*\r\" }
+        expect -re \"(#|\\\\$) \" { send \"echo $patch_time $LOGNAME ${a_out} restart=$asp_restart >> patch.log\r\" }
+        expect -re \"(#|\\\\$) \" { send \"exit\r\" }
+
+        expect -re \"(#|\\\\$) \" { send \"exit\r\" }
+    "
+}
+
+asp_control()
+{
+    expect -c "
+        set timeout -1 
+
+        # telnet session (loading server)
+        spawn telnet $ESM_SERVER_IP
+        expect { 
+            -re \"login: $\" { send \"$ESM_SERVER_USER\r\"; exp_continue }
+            -re \"Password: $\" { send \"$ESM_SERVER_PASSWD\r\"; exp_continue }
+            -re \"(%|#|\\\\$) \" { send \"telnet $target_ip\r\" }
+            timeout { exit $E_SERVER_NO_RESPONSE }
+        }
+
+        # telnet session (target)
+        expect { 
+            -re \"login: $\" { send \"root\r\"; exp_continue }
+            -re \"Password: $\" { send \"root\r\"; exp_continue }
+            -re \"(%|#|\\\\$) \" { send \"/opt/lgn/asp/etc/init.d/asp $1\r\" }
+            timeout { exit $E_TARGET_NO_RESPONSE }
+        }
+        expect -re \"(%|#|\\\\$) \" { send \"exit\r\" }
+
+        expect -re \"(%|#|\\\\$) \" { send \"exit\r\" }
+    "
+}
+
+############## start of script ##############
+
+asp_restart=1
+package_apply=0
+force="not_force"
+while getopts "npf" option; do
+    case $option in
+    n)  asp_restart=0 ;;
+    p)  package_apply=1 ;;
+    f)  force="force" ;;
+    *)  echo "invalid option ($option) :"
+        echo "$usage" 
+        exit $E_INVALID_ARGS ;;
+    esac
+done
+
+shift $(($OPTIND - 1))
+
+if [ "$#" -lt 2 ]; then 
+    echo "target ip and file name required!"
+    echo "$usage"
+    exit $E_INVALID_ARGS
+fi
+
+target_ip=$1; shift
+
+if [ "$force" == "force" -a $package_apply -ne 1 ]; then
+    echo "-f option must be used with -p option!"
+    echo "$usage"
+    exit $E_INVALID_ARGS
+fi
+
+rack=`get_rack_num $target_ip`
+shelf=`get_shelf_num $target_ip`
+processor=`get_processor_id $target_ip`
+
+get_loading_server_conf
+
+model=$NODE_TYPE
+
+if [ "$NODE_TYPE" == "MME" ]; then 
+    project=mme_prj
+else
+    project=agw_prj
+fi
+
+echo
+echo "## loading server configuration ##"
+echo "    > server ip         = $ESM_SERVER_IP"
+echo "    > server private ip = $ESM_SERVER_PRIVATE_IP"
+echo "    > target ip         = $target_ip"
+echo
+
+if [[ "$target_ip" =~ "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" ]] ; then
+#    if [ x$PPM_BLADE_TYPE == xOCTEON ]; then 
+#        if [ $processor -ne 7 -a $processor -ne 10 ] \
+#                && [ $processor -lt 41 -o $processor -gt 56 ] \
+#                && [ $processor -lt 81 -o $processor -gt 96 ]; then
+#            echo "invalid target ip ($target_ip)"
+#            echo "$usage"
+#            exit $E_INVALID_ARGS
+#        fi
+#    else
+#        if [ $processor -gt 16 ]; then 
+#            echo "invalid target ip ($target_ip)"
+#            echo "$usage"
+#            exit $E_INVALID_ARGS
+#        fi
+#    fi
+    echo "tpatch... target ip ($target_ip)"
+else
+    echo "invalid target ip ($target_ip)"
+    echo "$usage"
+    exit $E_INVALID_ARGS
+fi
+
+if [ $processor -le 16 ]; then
+    [ "$BINARY_MODE" == "64" ] && target=x86_64
+    [ "$BINARY_MODE" == "32" ] && target=i386_32
+
+    IMAGE_NAME=OMP
+else 
+    [ "$BINARY_MODE" == "64" ] && target=mips64
+    [ "$BINARY_MODE" == "32" ] && target=mips64_32
+
+    IMAGE_NAME=CPUP    
+fi
+
+checkWorkView
+
+image_dir_base=/epc/$project/$model/target/$target/*
+
+patch_time=`date +%F_%R`
+tar_package=0
+asp_stopped=0
+
+if [ $package_apply -eq 1 ]; then 
+    IMAGE_PATH=$(get_path $ESM_SERVER_IP $ESM_SERVER_USER $ESM_SERVER_PASSWD $ESM_SERVER_PKGHOME $rack $shelf $processor) 
+
+    if [ "$force" == "force" ]; then 
+        # restore original tarball...
+        echo "Restore original $IMAGE_NAME.tgz... "
+        remote_command $ESM_SERVER_IP $ESM_SERVER_SUSER $ESM_SERVER_SPASSWD "cp -f $ESM_SERVER_PKGHOME/$IMAGE_PATH/$IMAGE_NAME.tgz.org $ESM_SERVER_PKGHOME/$IMAGE_PATH/$IMAGE_NAME.tgz"
+
+        # remove .lock file
+        remote_command $ESM_SERVER_IP $ESM_SERVER_SUSER $ESM_SERVER_SPASSWD "rm -f $ESM_SERVER_PKGHOME/$IMAGE_PATH/.lock"
+    else
+        # before overwriting tarball, backup original.
+        echo "Backup current $IMAGE_NAME.tgz... "
+        remote_command $ESM_SERVER_IP $ESM_SERVER_SUSER $ESM_SERVER_SPASSWD "\[ -e $ESM_SERVER_PKGHOME/$IMAGE_PATH/$IMAGE_NAME.tgz.org ] && rm -f $ESM_SERVER_PKGHOME/$IMAGE_PATH/$IMAGE_NAME.tgz.org; cp -f $ESM_SERVER_PKGHOME/$IMAGE_PATH/$IMAGE_NAME.tgz $ESM_SERVER_PKGHOME/$IMAGE_PATH/$IMAGE_NAME.tgz.org"
+    fi
+
+    # untar image...
+    echo "ESM Package Untar.... "
+    untar_image $ESM_SERVER_IP $ESM_SERVER_SUSER $ESM_SERVER_SPASSWD $ESM_SERVER_PKGHOME/$IMAGE_PATH $IMAGE_NAME
+    result=$?
+    if [ $result -eq $E_IN_PROGRESS ]; then 
+        echo "tpatch -p in progress... try again in some later!"
+        exit $E_IN_PROGRESS
+    elif [ $result -ne 0 ]; then 
+        echo "tpatch -p error ($result)"
+        exit $result
+    else
+        echo "Untar done: $ESM_SERVER_PKGHOME/$IMAGE_PATH/$IMAGE_NAME.tgz"
+        tar_package=1
+    fi
+else
+    patch_dir=$ESM_SERVER_PKGHOME/tmp/$model/$target_ip
+    mk_patch_dir $ESM_SERVER_IP $ESM_SERVER_SUSER $ESM_SERVER_SPASSWD $patch_dir
+    result=$?
+    if [ $result -ne 0 ]; then 
+        echo "make patch directory error ($result)"
+        exit $result
+    fi
+fi
+
+for file_prefix in ${*} 
+do 
+    if [[ $file_prefix =~ "lib" ]]; then 
+        image_dir_suf=lib
+        if [ $package_apply -eq 0 ]; then
+            echo "[31mWarning) library files are recommended to be patched into package! (use with -p option)[m"
+        fi 
+    else
+        image_dir_suf=bin
+    fi
+
+    filelist=`ls $image_dir_base/$image_dir_suf/${file_prefix}* 2> /dev/null`
+    result=$?
+    if [ $result -ne 0 ]; then 
+        echo 
+        echo "[31mNo such file or directory! ($image_dir_base/$image_dir_suf/${file_prefix}*)[m"
+        echo 
+        continue; 
+    fi
+
+    # copy files into epc_sdc_l02:/tmp/...
+    for file in $filelist
+    do 
+        if [[ $file =~ ".*\.a" ]]; then 
+            continue
+        fi
+
+        filename=`basename $file`
+
+        if [ $package_apply -eq 1 ]; then 
+            scp_file $ESM_SERVER_IP $ESM_SERVER_SUSER $ESM_SERVER_SPASSWD $file $ESM_SERVER_PKGHOME/$IMAGE_PATH/$IMAGE_NAME/$image_dir_suf/$filename
+            result=$?
+            if [ $result -ne 0 ]; then 
+                echo "scp error ($result)"
+                continue;
+            else
+                echo "scp done!"
+            fi
+            remote_command $ESM_SERVER_IP $ESM_SERVER_SUSER $ESM_SERVER_SPASSWD "echo $patch_time $LOGNAME $filename >> $ESM_SERVER_PKGHOME/$IMAGE_PATH/patch.log"
+        else
+            scp_file $ESM_SERVER_IP $ESM_SERVER_SUSER $ESM_SERVER_SPASSWD $file $patch_dir/$filename
+            result=$?
+            if [ $result -ne 0 ]; then 
+                echo "scp error ($result)"
+                continue;
+            else
+                echo "scp done!"
+            fi
+        fi
+    done
+
+    if [ $package_apply -eq 0 ]; then 
+        if [ $asp_stopped -eq 0 -a $asp_restart -eq 1 ]; then 
+            asp_stopped=1
+            asp_control stop
+            sleep 5
+        fi
+
+        target_patch $file_prefix 
+        result=$?
+        if [ $result -ne 0 ]; then 
+            echo 
+            echo "[31mtarget($target_ip) patch failed! ($result)($image_dir_base/$image_dir_suf/${file_prefix}*)[m"
+            echo
+        else
+            echo
+            echo "[32mtarget($target_ip) patch done! ($image_dir_base/$image_dir_suf/${file_prefix}*)[m"
+            echo
+        fi
+
+# remove temporary files
+        rm -f $patch_dir/${file_prefix}*
+    fi
+done
+
+if [ $package_apply -eq 1 ]; then 
+    [ $tar_package -eq 1 ] && tar_image $ESM_SERVER_IP $ESM_SERVER_SUSER $ESM_SERVER_SPASSWD $ESM_SERVER_PKGHOME/$IMAGE_PATH $IMAGE_NAME
+else
+    [ $asp_stopped -eq 1 ] && asp_control start
+fi
