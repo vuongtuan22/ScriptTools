@@ -1,5 +1,7 @@
 #!/bin/bash
 
+#$2: user
+#$1: IP address
 remote_command()
 {   
    expect -c "
