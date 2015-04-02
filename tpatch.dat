@@ -179,9 +179,9 @@ validate_password()
      #sleep 1
      if [[ "$result" =~ "Last login" ]]; then
         ESM_USER_PASS="$password"
-      #  echo "Correct password "
-      #else
-      #  echo "Wrong password"
+        echo "Correct password: $password "
+     else
+        echo "Wrong password: $password"
      fi
   done
 }
