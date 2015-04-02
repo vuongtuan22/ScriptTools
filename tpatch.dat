@@ -166,7 +166,7 @@ ssh_attemp()
     "
 }
 #$1: target IP
-#$2: ESM IP
+#$2: ESM IPi
 #$3: user name
 validate_password()
 {
