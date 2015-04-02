@@ -16,8 +16,8 @@ get_password_list()
            password=epc.pkg.$month_char
            password_list=$password" ""epc.pkg.Q1"
     else
-           #password_list=" epc.pkg.difficult epc.pkg.Q1"
-           password_list=" epc.pkg.difficult admin"
+           password_list=" epc.pkg.difficult epc.pkg.Q1"
+           #password_list=" epc.pkg.difficult admin"
     fi
     echo $password_list 
 }
