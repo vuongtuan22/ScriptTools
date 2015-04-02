@@ -139,9 +139,9 @@ get_password_list()
            month=$(date '+%m');
            month_char=${month_info[$month]}
            password=epc.pkg.$month_char
-           password_list=$password" ""epc.pkg.Q1"
+           password_list=$password" ""epc.pkg.Q1 $ESM_SERVER_SPASSWD"
     else
-           password_list=" epc.pkg.difficult epc.pkg.Q1"
+           password_list=" epc.pkg.difficult epc.pkg.Q1 $ESM_SERVER_SPASSWD"
            #password_list=" epc.pkg.difficult admin"
     fi
     echo $password_list 
@@ -170,7 +170,7 @@ ssh_attemp()
 #$3: user name
 validate_password()
 {
-  temp=$(get_password_list $1)
+  temp=$(get_password_list $2)
   for password in $temp
   do
      #check password here
@@ -178,7 +178,7 @@ validate_password()
      result=$(ssh_attemp $2 $3 $password)
      #sleep 1
      if [[ "$result" =~ "Last login" ]]; then
-        ESM_USER_PASS="$password"
+        ESM_SERVER_SPASSWD="$password"
         echo "Correct password: $password "
      else
         echo "Wrong password: $password"
@@ -424,6 +424,9 @@ processor=`get_processor_id $target_ip`
 
 get_loading_server_conf
 #Tuan-Huy update script
+echo "target_ip: $target_ip"
+echo "ESM_SERVER_IP: $ESM_SERVER_IP"
+echo "ESM_SERVER_SUSER: $ESM_SERVER_SUSER"
 validate_password $target_ip $ESM_SERVER_IP $ESM_SERVER_USER
 #Tuan-Huy update end
 
