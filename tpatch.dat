@@ -180,7 +180,6 @@ validate_password()
      if [[ "$result" =~ "Last login" ]]; then
         ESM_SERVER_SPASSWD="$password"
         echo "Correct password: $password "
-        break
      else
         echo "Wrong password: $password"
      fi
@@ -428,7 +427,7 @@ get_loading_server_conf
 echo "target_ip: $target_ip"
 echo "ESM_SERVER_IP: $ESM_SERVER_IP"
 echo "ESM_SERVER_SUSER: $ESM_SERVER_SUSER"
-validate_password $target_ip $ESM_SERVER_IP $ESM_SERVER_SUSER
+validate_password $target_ip $ESM_SERVER_IP $ESM_SERVER_USER
 #Tuan-Huy update end
 
 model=$NODE_TYPE
