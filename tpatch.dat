@@ -318,6 +318,9 @@ get_path()
 target_patch()
 {
     local a_out=$1
+
+
+
      
     expect -c "
         set timeout -1
@@ -359,6 +362,77 @@ target_patch()
         expect -re \"(#|\\\\$) \" { send \"exit\r\" }
     "
 }
+#Tuan-Huy update : SCP: http://www.computerhope.com/unix/scp.htm
+target_patch_cpup()
+{
+    local a_out=$1
+
+
+    expect -c "
+        set timeout -1
+
+        # telnet session (ESM server)
+        spawn telnet $ESM_SERVER_IP
+        expect {
+            -re \"login: $\" { send \"$ESM_SERVER_USER\r\"; exp_continue }
+            -re \"Password: $\" { send \"$ESM_SERVER_PASSWD\r\"; exp_continue }
+            -re \"(#|\\\\$) \" { send \"telnet $omp_ip\r\" }
+            timeout { exit $E_SERVER_NO_RESPONSE }
+        }
+
+        # telnet session (OMP)
+        expect {
+            -re \"login: $\" { send \"root\r\"; exp_continue }
+            -re \"Password: $\" { send \"root\r\"; exp_continue }
+            -re \"(#|\\\\$) \" { send \"telnet $target_ip\r\" }
+            timeout { exit $E_TARGET_NO_RESPONSE }
+        }
+
+        # telnet session (Target)
+        expect {
+            -re \"login: $\" { send \"root\r\"; exp_continue }
+            -re \"Password: $\" { send \"root\r\"; exp_continue }
+            -re \"(#|\\\\$) \" { send \"cd /opt/lgn/asp/$image_dir_suf\r\" }
+            timeout { exit $E_TARGET_NO_RESPONSE }
+        }
+        expect {
+            \"No such file or directory\" { exit $E_NO_SUCH_DIR }
+            -re \"(#|\\\\$) \" { send \"rm -f ${a_out}*\r\" }
+        }
+        # Come back to OMP
+        expect -re \"(#|\\\\$) \" { send \"exit\r\" }
+
+        # Copy file to CPUP
+        expect -re \"(#|\\\\$) \" { send \"scp -3 $ESM_SERVER_USER@$ESM_SERVER_PRIVATE_IP:$patch_dir/${a_out}* root@$target_ip:/opt/lgn/asp/$image_dir_suf\r\" }     
+        expect {
+            -re \".*Are.*.*yes.*no.*\" { send \"yes\r\"; exp_continue }
+            \"password: \" { send \"$ESM_SERVER_PASSWD\r\" }
+            timeout { exit $E_SERVER_NO_RESPONSE }
+        }
+        expect {
+            -re \".*Are.*.*yes.*no.*\" { send \"yes\r\"; exp_continue }
+            \"password: \" { send \"root\r\" }
+            timeout { }
+        }
+        # telnet to CPUP again 
+        expect -re \"(#|\\\\$) \" { send \"telnet $target_ip\r\" }
+        expect {
+            -re \"login: $\" { send \"root\r\"; exp_continue }
+            -re \"Password: $\" { send \"root\r\"; exp_continue }
+            -re \"(#|\\\\$) \" { send \"cd /opt/lgn/asp/$image_dir_suf\r\" }
+            timeout { exit $E_TARGET_NO_RESPONSE }
+        }
+
+        # telnet session
+        expect -re \"(#|\\\\$) \" { send \"chmod +x ${a_out}*\r\" }
+        expect -re \"(#|\\\\$) \" { send \"ls -l ${a_out}*\r\" }
+        expect -re \"(#|\\\\$) \" { send \"echo $patch_time $LOGNAME ${a_out} restart=$asp_restart >> patch.log\r\" }
+        expect -re \"(#|\\\\$) \" { send \"exit\r\" }
+        expect -re \"(#|\\\\$) \" { send \"exit\r\" }
+        expect -re \"(#|\\\\$) \" { send \"exit\r\" }
+    "
+}
+#Tuan-Huy update end 
 
 asp_control()
 {
@@ -387,6 +461,44 @@ asp_control()
     "
 }
 
+#Tuan-Huy update
+asp_control_cpup()
+{
+        expect -c "
+        set timeout -1 
+
+        # telnet session (loading server)
+        spawn telnet $ESM_SERVER_IP
+        expect { 
+            -re \"login: $\" { send \"$ESM_SERVER_USER\r\"; exp_continue }
+            -re \"Password: $\" { send \"$ESM_SERVER_PASSWD\r\"; exp_continue }
+            -re \"(%|#|\\\\$) \" { send \"telnet $omp_ip\r\" }
+            timeout { exit $E_SERVER_NO_RESPONSE }
+        }
+
+        # telnet session in OMP(target)
+        expect { 
+            -re \"login: $\" { send \"root\r\"; exp_continue }
+            -re \"Password: $\" { send \"root\r\"; exp_continue }
+            -re \"(%|#|\\\\$) \" { send \"telnet $target_ip\r\" }
+            timeout { exit $E_TARGET_NO_RESPONSE }
+        }
+
+        # telnet session CPUP (target)
+        expect { 
+            -re \"login: $\" { send \"root\r\"; exp_continue }
+            -re \"Password: $\" { send \"root\r\"; exp_continue }
+            -re \"(%|#|\\\\$) \" { send \"/opt/lgn/asp/etc/init.d/asp $1\r\" }
+            timeout { exit $E_TARGET_NO_RESPONSE }
+        }
+
+        expect -re \"(%|#|\\\\$) \" { send \"exit\r\" }
+        expect -re \"(%|#|\\\\$) \" { send \"exit\r\" }
+        expect -re \"(%|#|\\\\$) \" { send \"exit\r\" }
+    "
+
+}
+#Tuan-Huy update end 
 ############## start of script ##############
 
 asp_restart=1
