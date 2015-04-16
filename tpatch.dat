@@ -480,8 +480,11 @@ target_patch()
 }
 #Tuan-Huy update end 
 
-asp_control()
+#Tuan Huy Update
+#asp_control()
+asp_control_omp()
 {
+#Update end
     expect -c "
         set timeout -1 
 
@@ -526,7 +529,7 @@ asp_control_cpup()
         expect { 
             -re \"login: $\" { send \"root\r\"; exp_continue }
             -re \"Password: $\" { send \"root\r\"; exp_continue }
-            -re \"(%|#|\\\\$) \" { send \"telnet $target_ip\r\" }
+            -re \"(%|#|\\\\$) \" { send \"telnet $2\r\" }
             timeout { exit $E_TARGET_NO_RESPONSE }
         }
 
@@ -543,6 +546,17 @@ asp_control_cpup()
         expect -re \"(%|#|\\\\$) \" { send \"exit\r\" }
     "
 
+}
+asp_control(){
+
+    if [[ "$(check_target_ip $target_ip)" =~ OMP ]]; then
+       echo "target: OMP"
+       asp_control_omp $1
+    else
+       echo "target: CPUP"
+       omp_ip_temp=$(get_omp_ip $target_ip)
+       asp_control_cpup $1 $omp_ip_temp
+    fi
 }
 #Tuan-Huy update end 
 ############## start of script ##############
