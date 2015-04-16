@@ -314,9 +314,11 @@ get_path()
     spath=${spath%%\"*}
     echo $spath
 }
-
-target_patch()
+#Tuan Huy Update
+#target_patch()
+target_patch_omp()
 {
+#update end
     local a_out=$1
 
 
@@ -362,11 +364,38 @@ target_patch()
         expect -re \"(#|\\\\$) \" { send \"exit\r\" }
     "
 }
-#Tuan-Huy update : SCP: http://www.computerhope.com/unix/scp.htm
+#Tuan-Huy update =====
+#$1: target ip
+#return value : OMP or CPUP
+check_target_type()
+{
+    IFS='.' read -a array <<< "$1"
+    value=${array[3]}
+    result=""
+    if [ $value == "23" ]; then
+        echo $value
+        result="OMP"
+    else
+        result="CPUP"
+            
+    fi
+    echo $result
+}   
+
+#$1: CPUP ip
+get_omp_ip()
+{
+    IFS='.' read -a array <<< "$1"
+    value="${array[0]}"."${array[1]}"."${array[2]}"."23"
+    echo $value
+}
+
+#$1 : a.out
+#$2 : omp_ip
 target_patch_cpup()
 {
     local a_out=$1
-
+    local omp_ip=$2
 
     expect -c "
         set timeout -1
@@ -388,7 +417,7 @@ target_patch_cpup()
             timeout { exit $E_TARGET_NO_RESPONSE }
         }
 
-        # telnet session (Target)
+        # telnet session (Target: CPUP)
         expect {
             -re \"login: $\" { send \"root\r\"; exp_continue }
             -re \"Password: $\" { send \"root\r\"; exp_continue }
@@ -402,35 +431,52 @@ target_patch_cpup()
         # Come back to OMP
         expect -re \"(#|\\\\$) \" { send \"exit\r\" }
 
-        # Copy file to CPUP
-        expect -re \"(#|\\\\$) \" { send \"scp -3 $ESM_SERVER_USER@$ESM_SERVER_PRIVATE_IP:$patch_dir/${a_out}* root@$target_ip:/opt/lgn/asp/$image_dir_suf\r\" }     
+        # Copy file from ESM to OMP
+        expect -re \"(#|\\\\$) \" { send \"scp $ESM_SERVER_USER@$ESM_SERVER_PRIVATE_IP:$patch_dir/${a_out}* /tmp/temp_file\r\" }     
         expect {
             -re \".*Are.*.*yes.*no.*\" { send \"yes\r\"; exp_continue }
             \"password: \" { send \"$ESM_SERVER_PASSWD\r\" }
             timeout { exit $E_SERVER_NO_RESPONSE }
         }
+        # Copy file from OMP to CPUP
+        expect -re \"(#|\\\\$) \" { send \"scp /tmp/temp_file root@$omp_ip:/opt/lgn/asp/$image_dir_suf/${a_out}*\r\" }
         expect {
             -re \".*Are.*.*yes.*no.*\" { send \"yes\r\"; exp_continue }
             \"password: \" { send \"root\r\" }
-            timeout { }
+            timeout { exit $E_SERVER_NO_RESPONSE }
         }
-        # telnet to CPUP again 
-        expect -re \"(#|\\\\$) \" { send \"telnet $target_ip\r\" }
+        #delete tmp file in OMP
+        expect -re \"(#|\\\\$) \" { send \"rm -f /tmp/temp_file\r\" }
+
+        # telnet to CPUP again (chmod)
         expect {
+            -re \"(#|\\\\$) \" { send \"telnet $target_ip\r\"; exp_continue }
             -re \"login: $\" { send \"root\r\"; exp_continue }
-            -re \"Password: $\" { send \"root\r\"; exp_continue }
-            -re \"(#|\\\\$) \" { send \"cd /opt/lgn/asp/$image_dir_suf\r\" }
+            -re \"Password: $\" { send \"root\r\" }
             timeout { exit $E_TARGET_NO_RESPONSE }
         }
-
         # telnet session
+        expect -re \"(#|\\\\$) \" { send \"cd /opt/lgn/asp/$image_dir_suf\r\" }
         expect -re \"(#|\\\\$) \" { send \"chmod +x ${a_out}*\r\" }
         expect -re \"(#|\\\\$) \" { send \"ls -l ${a_out}*\r\" }
         expect -re \"(#|\\\\$) \" { send \"echo $patch_time $LOGNAME ${a_out} restart=$asp_restart >> patch.log\r\" }
+        
         expect -re \"(#|\\\\$) \" { send \"exit\r\" }
         expect -re \"(#|\\\\$) \" { send \"exit\r\" }
         expect -re \"(#|\\\\$) \" { send \"exit\r\" }
     "
+}
+#$1 : a.out file 
+target_patch()
+{
+    if [[ "$(check_target_ip $target_ip)" =~ OMP ]]; then
+       echo "target: OMP"
+       target_patch_omp $1
+    else
+       echo "target: CPUP"
+       omp_ip_temp=$(get_omp_ip $target_ip)
+       target_patch_cpup $1 $omp_ip_temp
+    fi
 }
 #Tuan-Huy update end 
 
