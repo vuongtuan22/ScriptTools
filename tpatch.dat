@@ -469,7 +469,7 @@ target_patch_cpup()
 #$1 : a.out file 
 target_patch()
 {
-    if [[ "$(check_target_ip $target_ip)" =~ OMP ]]; then
+    if [[ "$(check_target_type $target_ip)" =~ OMP ]]; then
        echo "target: OMP"
        target_patch_omp $1
     else
@@ -549,7 +549,7 @@ asp_control_cpup()
 }
 asp_control(){
 
-    if [[ "$(check_target_ip $target_ip)" =~ OMP ]]; then
+    if [[ "$(check_target_type $target_ip)" =~ OMP ]]; then
        echo "target: OMP"
        asp_control_omp $1
     else
